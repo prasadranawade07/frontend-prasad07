@@ -1,0 +1,92 @@
+name: Frontend CI/CD (Development)
+
+on:
+  workflow_dispatch:
+
+  push:
+    branches:
+      - dev
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+
+    environment:
+      name: Development
+
+    steps:
+
+      ############################################################
+      # CHECKOUT
+      ############################################################
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      ############################################################
+      # CONFIGURE AWS CREDENTIALS
+      ############################################################
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-frontend
+
+      ############################################################
+      # VERIFY AWS LOGIN
+      ############################################################
+
+      - name: Verify AWS Identity
+        run: |
+          aws sts get-caller-identity
+
+      ############################################################
+      # DOWNLOAD TERRAFORM STATE
+      ############################################################
+
+      - name: Download Terraform State
+        run: |
+          aws s3 cp \
+            s3://space9-remote-state-239713807106/frontend/webapp/dev/terraform.tfstate \
+            terraform.tfstate
+
+      ############################################################
+      # LOAD TERRAFORM OUTPUTS
+      ############################################################
+
+      - name: Read Terraform Outputs
+        run: |
+          echo "S3_BUCKET_NAME=$(jq -r '.outputs.bucket_name.value' terraform.tfstate)" >> $GITHUB_ENV
+          echo "CLOUDFRONT_DISTRIBUTION_ID=$(jq -r '.outputs.cloudfront_distribution_id.value' terraform.tfstate)" >> $GITHUB_ENV
+          echo "FRONTEND_URL=$(jq -r '.outputs.frontend_url.value' terraform.tfstate)" >> $GITHUB_ENV
+
+      - name: Display Infrastructure Outputs
+        run: |
+          echo "Bucket Name              : $S3_BUCKET_NAME"
+          echo "CloudFront Distribution  : $CLOUDFRONT_DISTRIBUTION_ID"
+          echo "Frontend URL             : $FRONTEND_URL"
+
+      ############################################################
+      # DEPLOY TO S3
+      ############################################################
+
+      - name: Upload Frontend to Amazon S3
+        run: |
+          aws s3 sync frontend/ s3://$S3_BUCKET_NAME --delete
+
+      ############################################################
+      # INVALIDATE CLOUDFRONT
+      ############################################################
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+            --paths "/*"
