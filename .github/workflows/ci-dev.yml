@@ -1,98 +1,65 @@
-name: Frontend CI/CD (Development)
+name: "OIDC Debug"
 
 on:
   workflow_dispatch:
-
-  push:
-    branches:
-      - dev
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  deploy:
-    name: Deploy Frontend
+  debug:
     runs-on: ubuntu-latest
 
-    environment:
-      name: Development
+    environment: Development
 
     steps:
-
-      ############################################################
-      # CHECKOUT
-      ############################################################
-
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      ############################################################
-      # CONFIGURE AWS CREDENTIALS
-      ############################################################
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: arn:aws:iam::239713807106:role/production-eks-devops-platform-frontend-role
-          aws-region: ap-south-1
-          role-session-name: github-actions-frontend
-
-      ############################################################
-      # VERIFY AWS LOGIN
-      ############################################################
-
-      - name: Verify AWS Identity
+      - name: Install jq
         run: |
-          aws sts get-caller-identity
-          echo "Repository      : $GITHUB_REPOSITORY"
-          echo "RepositoryOwner : $GITHUB_REPOSITORY_OWNER"
-          echo "Ref             : $GITHUB_REF"
-          echo "Ref Name        : $GITHUB_REF_NAME"
-          echo "Event           : $GITHUB_EVENT_NAME"
-          echo "Workflow Ref    : $GITHUB_WORKFLOW_REF"
+          sudo apt-get update
+          sudo apt-get install -y jq
 
-      ############################################################
-      # DOWNLOAD TERRAFORM STATE
-      ############################################################
-
-      - name: Download Terraform State
+      - name: Fetch and Decode OIDC Token
+        shell: bash
         run: |
-          aws s3 cp \
-            s3://prasad-terraform-state-bucket-2026/frontend/webapp/dev/terraform.tfstate \
-            terraform.tfstate
+          set -euo pipefail
 
-      ############################################################
-      # LOAD TERRAFORM OUTPUTS
-      ############################################################
+          echo "OIDC Request URL:"
+          echo "${ACTIONS_ID_TOKEN_REQUEST_URL}"
 
-      - name: Read Terraform Outputs
-        run: |
-          echo "S3_BUCKET_NAME=$(jq -r '.outputs.bucket_name.value' terraform.tfstate)" >> $GITHUB_ENV
-          echo "CLOUDFRONT_DISTRIBUTION_ID=$(jq -r '.outputs.cloudfront_distribution_id.value' terraform.tfstate)" >> $GITHUB_ENV
-          echo "FRONTEND_URL=$(jq -r '.outputs.frontend_url.value' terraform.tfstate)" >> $GITHUB_ENV
+          if [[ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+            echo "OIDC environment variables are missing."
+            exit 1
+          fi
 
-      - name: Display Infrastructure Outputs
-        run: |
-          echo "Bucket Name              : $S3_BUCKET_NAME"
-          echo "CloudFront Distribution  : $CLOUDFRONT_DISTRIBUTION_ID"
-          echo "Frontend URL             : $FRONTEND_URL"
+          TOKEN=$(
+            curl -sSf \
+              -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+            | jq -er '.value'
+          )
 
-      ############################################################
-      # DEPLOY TO S3
-      ############################################################
+          echo "Token received."
 
-      - name: Upload Frontend to Amazon S3
-        run: |
-          aws s3 sync frontend/ s3://$S3_BUCKET_NAME --delete
+          export TOKEN
 
-      ############################################################
-      # INVALIDATE CLOUDFRONT
-      ############################################################
+          python3 <<'EOF'
+import base64
+import json
+import os
 
-      - name: Invalidate CloudFront Cache
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-            --paths "/*"
+token = os.environ["TOKEN"]
+
+try:
+    payload = token.split(".")[1]
+except IndexError:
+    raise SystemExit("Invalid JWT format")
+
+payload += "=" * (-len(payload) % 4)
+
+decoded = json.loads(base64.urlsafe_b64decode(payload))
+print(json.dumps(decoded, indent=2))
+EOF
