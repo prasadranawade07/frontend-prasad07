@@ -19,74 +19,287 @@ jobs:
     environment:
       name: Development
 
+    env:
+      TF_STATE_BUCKET: prasad-terraform-state-bucket-2026
+      TF_STATE_KEY: frontend/webapp/dev/terraform.tfstate
+
     steps:
 
-      ############################################################
-      # CHECKOUT
-      ############################################################
+    ############################################################
+    # CHECKOUT
+    ############################################################
 
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      ############################################################
-      # CONFIGURE AWS CREDENTIALS
-      ############################################################
+    ############################################################
+    # GITHUB DEBUG
+    ############################################################
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: github-actions-frontend
+    - name: Debug GitHub Context
+      run: |
+        echo "=================================================="
+        echo "GITHUB INFORMATION"
+        echo "=================================================="
 
-      ############################################################
-      # VERIFY AWS LOGIN
-      ############################################################
+        echo "Repository              : $GITHUB_REPOSITORY"
+        echo "Repository Owner        : $GITHUB_REPOSITORY_OWNER"
+        echo "Branch                  : $GITHUB_REF"
+        echo "Branch Name             : $GITHUB_REF_NAME"
+        echo "Commit SHA              : $GITHUB_SHA"
+        echo "Actor                   : $GITHUB_ACTOR"
+        echo "Workflow                : $GITHUB_WORKFLOW"
+        echo "Run ID                  : $GITHUB_RUN_ID"
+        echo "Runner                  : $RUNNER_OS"
+        echo "GitHub Environment      : Development"
 
-      - name: Verify AWS Identity
-        run: |
-          aws sts get-caller-identity
+    ############################################################
+    # AWS DEBUG
+    ############################################################
 
-      ############################################################
-      # DOWNLOAD TERRAFORM STATE
-      ############################################################
+    - name: Debug AWS Configuration
+      run: |
+        echo "=================================================="
+        echo "AWS CONFIGURATION"
+        echo "=================================================="
 
-      - name: Download Terraform State
-        run: |
-          aws s3 cp \
-            s3://prasad-terraform-state-bucket-2026/frontend/webapp/dev/terraform.tfstate \
-            terraform.tfstate
+        echo "AWS Region              : ${{ vars.AWS_REGION }}"
+        echo "AWS Role ARN            : ${{ secrets.AWS_ROLE_ARN }}"
+        echo "Terraform State Bucket  : $TF_STATE_BUCKET"
+        echo "Terraform State Key     : $TF_STATE_KEY"
 
-      ############################################################
-      # LOAD TERRAFORM OUTPUTS
-      ############################################################
+    ############################################################
+    # CONFIGURE AWS CREDENTIALS
+    ############################################################
 
-      - name: Read Terraform Outputs
-        run: |
-          echo "S3_BUCKET_NAME=$(jq -r '.outputs.bucket_name.value' terraform.tfstate)" >> $GITHUB_ENV
-          echo "CLOUDFRONT_DISTRIBUTION_ID=$(jq -r '.outputs.cloudfront_distribution_id.value' terraform.tfstate)" >> $GITHUB_ENV
-          echo "FRONTEND_URL=$(jq -r '.outputs.frontend_url.value' terraform.tfstate)" >> $GITHUB_ENV
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v5
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        role-session-name: github-actions-frontend
 
-      - name: Display Infrastructure Outputs
-        run: |
-          echo "Bucket Name              : $S3_BUCKET_NAME"
-          echo "CloudFront Distribution  : $CLOUDFRONT_DISTRIBUTION_ID"
-          echo "Frontend URL             : $FRONTEND_URL"
+    ############################################################
+    # VERIFY ROLE ASSUMPTION
+    ############################################################
 
-      ############################################################
-      # DEPLOY TO S3
-      ############################################################
+    - name: Verify AWS Identity
+      run: |
+        echo "=================================================="
+        echo "VERIFY ROLE ASSUMPTION"
+        echo "=================================================="
 
-      - name: Upload Frontend to Amazon S3
-        run: |
-          aws s3 sync frontend/ s3://$S3_BUCKET_NAME --delete
+        aws sts get-caller-identity
 
-      ############################################################
-      # INVALIDATE CLOUDFRONT
-      ############################################################
+        echo
 
-      - name: Invalidate CloudFront Cache
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
-            --paths "/*"
+        ARN=$(aws sts get-caller-identity --query Arn --output text)
+
+        echo "Current ARN:"
+        echo "$ARN"
+
+        if [[ "$ARN" == *"assumed-role"* ]]; then
+          echo "✅ Successfully assumed IAM Role"
+        else
+          echo "❌ Failed to assume IAM Role"
+          exit 1
+        fi
+
+    ############################################################
+    # AWS CLI DEBUG
+    ############################################################
+
+    - name: AWS CLI Information
+      run: |
+        echo "=================================================="
+        echo "AWS CLI"
+        echo "=================================================="
+
+        aws --version
+
+        echo
+
+        aws configure list
+
+    ############################################################
+    # VERIFY AWS ACCESS
+    ############################################################
+
+    - name: Verify AWS Permissions
+      run: |
+        echo "=================================================="
+        echo "VERIFY AWS ACCESS"
+        echo "=================================================="
+
+        echo
+        echo "Listing S3 Buckets..."
+        aws s3 ls
+
+        echo
+        echo "Checking CloudFront..."
+        aws cloudfront list-distributions \
+          --query "DistributionList.Items[*].[Id,DomainName]" \
+          --output table
+
+    ############################################################
+    # VERIFY TERRAFORM STATE EXISTS
+    ############################################################
+
+    - name: Verify Terraform State Exists
+      run: |
+        echo "=================================================="
+        echo "VERIFY TERRAFORM STATE"
+        echo "=================================================="
+
+        aws s3 ls s3://$TF_STATE_BUCKET/
+
+        echo
+
+        aws s3 ls s3://$TF_STATE_BUCKET/frontend/webapp/dev/
+
+    ############################################################
+    # DOWNLOAD TERRAFORM STATE
+    ############################################################
+
+    - name: Download Terraform State
+      run: |
+        aws s3 cp \
+          s3://$TF_STATE_BUCKET/$TF_STATE_KEY \
+          terraform.tfstate
+
+    ############################################################
+    # VALIDATE TERRAFORM STATE
+    ############################################################
+
+    - name: Validate Terraform State
+      run: |
+        echo "=================================================="
+        echo "VALIDATE TERRAFORM STATE"
+        echo "=================================================="
+
+        ls -lh terraform.tfstate
+
+        echo
+
+        jq '.outputs' terraform.tfstate
+
+    ############################################################
+    # LOAD OUTPUTS
+    ############################################################
+
+    - name: Read Terraform Outputs
+      run: |
+        echo "S3_BUCKET_NAME=$(jq -r '.outputs.bucket_name.value' terraform.tfstate)" >> $GITHUB_ENV
+        echo "CLOUDFRONT_DISTRIBUTION_ID=$(jq -r '.outputs.cloudfront_distribution_id.value' terraform.tfstate)" >> $GITHUB_ENV
+        echo "FRONTEND_URL=$(jq -r '.outputs.frontend_url.value' terraform.tfstate)" >> $GITHUB_ENV
+
+    ############################################################
+    # DISPLAY OUTPUTS
+    ############################################################
+
+    - name: Display Infrastructure Outputs
+      run: |
+        echo "=================================================="
+        echo "INFRASTRUCTURE OUTPUTS"
+        echo "=================================================="
+
+        echo "S3 Bucket                : $S3_BUCKET_NAME"
+        echo "CloudFront Distribution  : $CLOUDFRONT_DISTRIBUTION_ID"
+        echo "Frontend URL             : $FRONTEND_URL"
+
+    ############################################################
+    # VERIFY S3 BUCKET
+    ############################################################
+
+    - name: Verify S3 Bucket
+      run: |
+        echo "=================================================="
+        echo "VERIFY TARGET S3 BUCKET"
+        echo "=================================================="
+
+        aws s3api head-bucket \
+          --bucket $S3_BUCKET_NAME
+
+        echo
+
+        aws s3 ls s3://$S3_BUCKET_NAME
+
+    ############################################################
+    # DEPLOY
+    ############################################################
+
+    - name: Upload Frontend to Amazon S3
+      run: |
+        echo "=================================================="
+        echo "DEPLOYING FRONTEND"
+        echo "=================================================="
+
+        aws s3 sync \
+          frontend/ \
+          s3://$S3_BUCKET_NAME \
+          --delete
+
+    ############################################################
+    # VERIFY DEPLOYMENT
+    ############################################################
+
+    - name: Verify Uploaded Files
+      run: |
+        echo "=================================================="
+        echo "VERIFY DEPLOYMENT"
+        echo "=================================================="
+
+        aws s3 ls \
+          s3://$S3_BUCKET_NAME \
+          --recursive | head -20
+
+    ############################################################
+    # INVALIDATE CLOUDFRONT
+    ############################################################
+
+    - name: Invalidate CloudFront
+      id: invalidate
+      run: |
+        echo "=================================================="
+        echo "CLOUDFRONT INVALIDATION"
+        echo "=================================================="
+
+        INVALIDATION_ID=$(aws cloudfront create-invalidation \
+          --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+          --paths "/*" \
+          --query "Invalidation.Id" \
+          --output text)
+
+        echo "INVALIDATION_ID=$INVALIDATION_ID" >> $GITHUB_ENV
+
+        echo "Invalidation ID: $INVALIDATION_ID"
+
+    ############################################################
+    # VERIFY INVALIDATION
+    ############################################################
+
+    - name: Verify CloudFront Invalidation
+      run: |
+        aws cloudfront get-invalidation \
+          --distribution-id $CLOUDFRONT_DISTRIBUTION_ID \
+          --id $INVALIDATION_ID
+
+    ############################################################
+    # DEPLOYMENT SUMMARY
+    ############################################################
+
+    - name: Deployment Summary
+      if: always()
+      run: |
+        echo "=================================================="
+        echo "DEPLOYMENT SUMMARY"
+        echo "=================================================="
+
+        echo "Repository          : $GITHUB_REPOSITORY"
+        echo "Branch              : $GITHUB_REF_NAME"
+        echo "Commit              : $GITHUB_SHA"
+        echo "AWS Region          : ${{ vars.AWS_REGION }}"
+        echo "S3 Bucket           : $S3_BUCKET_NAME"
+        echo "CloudFront ID       : $CLOUDFRONT_DISTRIBUTION_ID"
+        echo "Frontend URL        : $FRONTEND_URL"
+        echo "Completed           : $(date)"
