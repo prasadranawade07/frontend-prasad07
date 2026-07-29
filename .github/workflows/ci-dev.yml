@@ -20,7 +20,7 @@ jobs:
       name: Development
 
     env:
-      TFSTATE_BUCKET: space9-remote-state-239713807106
+      TFSTATE_BUCKET: prasad-terraform-state-bucket-2026
       TFSTATE_KEY: frontend/webapp/dev/terraform.tfstate
 
     steps:
