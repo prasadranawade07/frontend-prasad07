@@ -57,16 +57,16 @@ jobs:
     # AWS DEBUG
     ############################################################
 
-    - name: Debug AWS Configuration
-      run: |
-        echo "=================================================="
-        echo "AWS CONFIGURATION"
-        echo "=================================================="
+    # - name: Debug AWS Configuration
+    #   run: |
+    #     echo "=================================================="
+    #     echo "AWS CONFIGURATION"
+    #     echo "=================================================="
 
-        echo "AWS Region              : ${{ vars.AWS_REGION }}"
-        echo "AWS Role ARN            : ${{ secrets.AWS_ROLE_ARN }}"
-        echo "Terraform State Bucket  : $TF_STATE_BUCKET"
-        echo "Terraform State Key     : $TF_STATE_KEY"
+    #     echo "AWS Region              : ${{ vars.AWS_REGION }}"
+    #     echo "AWS Role ARN            : ${{ secrets.AWS_ROLE_ARN }}"
+    #     echo "Terraform State Bucket  : $TF_STATE_BUCKET"
+    #     echo "Terraform State Key     : $TF_STATE_KEY"
 
     ############################################################
     # CONFIGURE AWS CREDENTIALS
@@ -75,8 +75,8 @@ jobs:
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v5
       with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ vars.AWS_REGION }}
+        role-to-assume: arn:aws:iam::239713807106:role/production-eks-devops-platform-frontend-role
+        aws-region: ap-south-1
         role-session-name: github-actions-frontend
 
     ############################################################
